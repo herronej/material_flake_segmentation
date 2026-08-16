@@ -189,13 +189,22 @@ def main() -> None:
     parser.add_argument("--split", default="train2024")
     parser.add_argument("--limit", type=int, default=50, help="0 for all images")
     parser.add_argument("--out", default=None, help="write full JSON report here")
+    parser.add_argument(
+        "--polarity",
+        default="dark",
+        choices=("dark", "bright", "both"),
+        help=(
+            "which side of the substrate flakes sit on during background estimation; "
+            "'dark' suits graphene and the TMDs, 'both' suits hBN"
+        ),
+    )
     args = parser.parse_args()
 
     pairs = find_pairs(Path(args.root), args.split)
     if args.limit > 0:
         pairs = pairs[: args.limit]
 
-    config = ContrastConfig()
+    config = ContrastConfig(polarity=args.polarity)
     records = []
     for i, (image_path, mask_path) in enumerate(pairs):
         records.append(analyze_pair(image_path, mask_path, config))

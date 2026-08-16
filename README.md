@@ -63,6 +63,35 @@ flagged as unsafe on the Hub. This repo does not load them. If you want to
 compare against the baseline, load with `weights_only=True` in an isolated
 environment and port the tensors explicitly.
 
+### hBN, via MaskTerial
+
+[MaskTerial](https://github.com/Jaluus/MaskTerial) ships per-pixel semantic
+masks, not just the COCO/RLE instance annotations, so no rasterization is
+needed — only a directory remap:
+
+```bash
+curl -L -o Real_hBN_Thin.zip "https://zenodo.org/records/15765514/files/Real_hBN_Thin.zip?download=1"
+python -m zipfile -e Real_hBN_Thin.zip raw/
+flakeseg-prepare-maskterial --src raw/hBN_Thin --dst data/hBN_Thin --val-fraction 0.2
+```
+
+Two of those conversions are load-bearing. MaskTerial masks encode *layer
+number*, so feeding them to a 2-logit head is an out-of-bounds class index
+rather than a silent degradation; the converter collapses them by default and
+`--keep-classes` opts out. And the release has only train and test, so
+`--val-fraction` holds out images for threshold calibration — sweeping the
+threshold on test would invalidate the number it produces.
+
+hBN is not graphene optically. Its contrast is interference-driven rather than
+absorptive, so the sign is not fixed with thickness, and the default background
+estimator assumes flakes sit *below* the substrate level. `configs/hbn.yaml`
+therefore sets `contrast.polarity: both`. Confirm that choice on real images
+before a long run:
+
+```bash
+flakeseg-audit --root data/hBN_Thin --split train --polarity both --limit 50
+```
+
 ## Run the audit first
 
 ```bash
@@ -133,6 +162,7 @@ src/flakeseg/
   data/contrast.py     background estimation, optical contrast
   data/dataset.py      foreground-oversampled crops, area-balanced weights
   data/transforms.py   physically-grounded augmentation
+  data/maskterial.py   flakeseg-prepare-maskterial  MaskTerial -> this layout
   models/unet.py       ConvNeXt encoder, detail branch, stride-1 head
   losses.py            weighted CE + Tversky + soft boundary
   metrics.py           RegionIoU, boundary IoU, confusion-matrix metrics

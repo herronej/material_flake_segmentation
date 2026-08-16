@@ -372,3 +372,179 @@ def _write_synthetic(root, n_train=4, size=(200, 220)):
             Image.fromarray(mask).save(
                 root / "annotations_semseg" / split / f"i{i}.png"
             )
+
+
+def _write_maskterial(root, n_train=6, n_test=2, size=(64, 72), layers=3):
+    """Minimal MaskTerial release, in the layout the Zenodo zips unpack to."""
+    from PIL import Image
+
+    rng = np.random.default_rng(1)
+    h, w = size
+    for images_dir, masks_dir, n in (
+        ("train_images", "train_semantic_masks", n_train),
+        ("test_images", "test_semantic_masks", n_test),
+    ):
+        (root / images_dir).mkdir(parents=True, exist_ok=True)
+        (root / masks_dir).mkdir(parents=True, exist_ok=True)
+        for i in range(n):
+            img = np.clip(
+                np.full((h, w, 3), 120.0) + rng.normal(0, 2, (h, w, 3)), 0, 255
+            ).astype(np.uint8)
+            # Layer ids 1..layers, as MaskTerial encodes them.
+            mask = np.zeros((h, w), dtype=np.uint8)
+            for layer in range(1, layers + 1):
+                mask[10 * layer : 10 * layer + 6, 5:20] = layer
+            Image.fromarray(img).save(root / images_dir / f"u{i}.png")
+            Image.fromarray(mask).save(root / masks_dir / f"u{i}.png")
+
+
+class TestMaskTerialConversion:
+    def test_layout_matches_find_pairs(self, tmp_path):
+        from flakeseg.data.dataset import find_pairs
+        from flakeseg.data.maskterial import prepare
+
+        src, dst = tmp_path / "hBN_Thin", tmp_path / "out"
+        _write_maskterial(src)
+        prepare(src, dst)
+
+        for split, expected in (("train", 6), ("test", 2)):
+            pairs = find_pairs(dst, split)
+            assert len(pairs) == expected
+
+    def test_binary_collapses_layer_ids(self, tmp_path):
+        from PIL import Image
+
+        from flakeseg.data.maskterial import prepare
+
+        src, dst = tmp_path / "hBN_Thin", tmp_path / "out"
+        _write_maskterial(src, layers=3)
+        prepare(src, dst, binary=True)
+
+        mask = np.array(Image.open(dst / "annotations_semseg" / "train" / "u0.png"))
+        assert set(np.unique(mask).tolist()) == {0, 1}
+
+    def test_keep_classes_preserves_layer_ids(self, tmp_path):
+        from PIL import Image
+
+        from flakeseg.data.maskterial import prepare
+
+        src, dst = tmp_path / "hBN_Thin", tmp_path / "out"
+        _write_maskterial(src, layers=3)
+        manifest = prepare(src, dst, binary=False)
+
+        mask = np.array(Image.open(dst / "annotations_semseg" / "train" / "u0.png"))
+        assert set(np.unique(mask).tolist()) == {0, 1, 2, 3}
+        assert manifest["binary"] is False
+
+    def test_val_split_is_disjoint_and_deterministic(self, tmp_path):
+        from flakeseg.data.dataset import find_pairs
+        from flakeseg.data.maskterial import prepare
+
+        src = tmp_path / "hBN_Thin"
+        _write_maskterial(src, n_train=6)
+
+        names = []
+        for run in ("a", "b"):
+            dst = tmp_path / run
+            prepare(src, dst, val_fraction=0.5, seed=0)
+            train = {p.stem for p, _ in find_pairs(dst, "train")}
+            val = {p.stem for p, _ in find_pairs(dst, "val")}
+            assert not (train & val), "val leaked into train"
+            assert len(train) == 3 and len(val) == 3
+            names.append((sorted(train), sorted(val)))
+        assert names[0] == names[1], "partition is not deterministic across runs"
+
+    def test_val_fraction_consuming_everything_is_rejected(self, tmp_path):
+        from flakeseg.data.maskterial import prepare
+
+        src, dst = tmp_path / "hBN_Thin", tmp_path / "out"
+        _write_maskterial(src, n_train=4)
+        with pytest.raises(ValueError, match="would consume all"):
+            prepare(src, dst, val_fraction=1.0)
+
+    def test_rejects_non_maskterial_directory(self, tmp_path):
+        from flakeseg.data.maskterial import prepare
+
+        src = tmp_path / "not_maskterial"
+        src.mkdir()
+        with pytest.raises(FileNotFoundError, match="does not look like"):
+            prepare(src, tmp_path / "out")
+
+    def test_reports_class_histogram_and_pairs(self, tmp_path):
+        from flakeseg.data.maskterial import prepare, summarize
+
+        src, dst = tmp_path / "hBN_Thin", tmp_path / "out"
+        _write_maskterial(src, n_train=6, n_test=2, layers=2)
+        manifest = prepare(src, dst, binary=False)
+
+        train = next(s for s in manifest["splits"] if s["split"] == "train")
+        assert train["pairs"] == 6
+        assert set(train["class_histogram"]) == {"0", "1", "2"}
+        # summarize() tells the user the num_classes their choice implies.
+        assert "num_classes: 3" in summarize(manifest)
+
+    def test_colour_coded_mask_is_refused_not_guessed(self, tmp_path):
+        from PIL import Image
+
+        from flakeseg.data.maskterial import read_mask
+
+        path = tmp_path / "rgb.png"
+        array = np.zeros((8, 8, 3), dtype=np.uint8)
+        array[..., 0] = 1  # channels disagree: a real colour map, not class ids
+        Image.fromarray(array).save(path)
+        with pytest.raises(ValueError, match="colour-coded"):
+            read_mask(path)
+
+
+class TestContrastPolarity:
+    def _stack(self, sign):
+        """Flat substrate with a flake of the given sign."""
+        image = np.full((64, 64, 3), 120.0, dtype=np.float32)
+        image[20:40, 20:40] += sign * 20.0
+        return image
+
+    def test_dark_polarity_is_unchanged_default(self):
+        from flakeseg.data.contrast import ContrastConfig
+
+        assert ContrastConfig().polarity == "dark"
+
+    def test_background_ignores_flake_of_matching_polarity(self):
+        from flakeseg.data.contrast import ContrastConfig, estimate_background
+
+        for sign, polarity in ((-1.0, "dark"), (1.0, "bright")):
+            image = self._stack(sign)
+            background = estimate_background(
+                image, ContrastConfig(polarity=polarity, poly_downsample=1)
+            )
+            # Substrate level recovered despite the flake, so contrast is real.
+            assert abs(float(background[0, 0, 0]) - 120.0) < 1.5
+
+    def test_both_polarity_handles_either_sign(self):
+        from flakeseg.data.contrast import ContrastConfig, estimate_background
+
+        for sign in (-1.0, 1.0):
+            image = self._stack(sign)
+            background = estimate_background(
+                image, ContrastConfig(polarity="both", poly_downsample=1)
+            )
+            assert abs(float(background[0, 0, 0]) - 120.0) < 1.5
+
+    def test_morphological_polarity_selects_operator(self):
+        from flakeseg.data.contrast import ContrastConfig, estimate_background
+
+        image = self._stack(1.0)  # 20x20 bright flake on a 120 substrate
+        # The structuring element has to exceed the flake for opening to erase it.
+        dark_cfg = ContrastConfig(method="morphological", polarity="dark", morph_size=31)
+        bright_cfg = ContrastConfig(method="morphological", polarity="bright", morph_size=31)
+        # Closing leaves a bright flake in the background, so its contrast is
+        # lost; opening removes it and the substrate level is recovered.
+        assert float(estimate_background(image, dark_cfg)[30, 30, 0]) > 135.0
+        assert float(estimate_background(image, bright_cfg)[30, 30, 0]) < 125.0
+
+    def test_unknown_polarity_raises(self):
+        from flakeseg.data.contrast import ContrastConfig, estimate_background
+
+        with pytest.raises(ValueError, match="unknown polarity"):
+            estimate_background(
+                self._stack(-1.0), ContrastConfig(polarity="sideways")
+            )

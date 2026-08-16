@@ -34,15 +34,28 @@ from scipy import ndimage
 
 BackgroundMethod = Literal["polynomial", "median", "morphological", "none"]
 
+#: Which side of the substrate level flakes sit on.
+#:
+#: Graphene and the TMDs on the standard SiO2/Si stack absorb, so under
+#: brightfield they are darker than the substrate and `dark` is correct. hBN is
+#: far more transparent and its contrast is interference-driven, so the sign
+#: varies with thickness, wavelength and oxide thickness; `both` rejects
+#: outliers symmetrically and makes no assumption. Getting this wrong does not
+#: crash anything, it just fits the substrate surface through the flakes and
+#: quietly flattens the signal the network is meant to see.
+Polarity = Literal["dark", "bright", "both"]
+
 
 @dataclass(frozen=True)
 class ContrastConfig:
     """Configuration for optical contrast normalization."""
 
     method: BackgroundMethod = "polynomial"
+    polarity: Polarity = "dark"
     poly_degree: int = 2
     poly_iterations: int = 3
     poly_downsample: int = 8
+    poly_reject_sigma: float = 1.0
     median_size: int = 129
     median_downsample: int = 4
     morph_size: int = 101
@@ -56,13 +69,16 @@ def _fit_poly_background(
     degree: int,
     iterations: int,
     downsample: int,
+    polarity: Polarity = "dark",
+    reject_sigma: float = 1.0,
 ) -> np.ndarray:
     """Robust low-order polynomial fit to the substrate level of one channel.
 
-    Uses iterative reweighting that progressively discards pixels sitting below
-    the current fit. Flakes are darker than the substrate on the standard
-    SiO2/Si stack under brightfield, so they appear as negative residuals; each
-    iteration trims them and refits on what remains.
+    Uses iterative reweighting that progressively discards the pixels a flake
+    would occupy. With `polarity="dark"` (graphene, TMDs on SiO2/Si under
+    brightfield) flakes appear as negative residuals and only those are
+    trimmed; `"bright"` mirrors that, and `"both"` trims symmetrically for
+    materials such as hBN whose contrast sign is not fixed.
 
     Parameters
     ----------
@@ -75,6 +91,10 @@ def _fit_poly_background(
     downsample:
         Stride used when building the design matrix. The fit is evaluated at
         full resolution regardless.
+    polarity:
+        Which residual sign is treated as flake rather than substrate.
+    reject_sigma:
+        Rejection threshold in robust sigma.
 
     Returns
     -------
@@ -106,11 +126,19 @@ def _fit_poly_background(
             break
         coeffs, *_ = np.linalg.lstsq(basis[mask], zs[mask], rcond=None)
         residual = zs - basis @ coeffs
-        # Keep pixels at or above the fit, plus anything within one robust sigma
-        # below it, so that noise does not bias the surface upward.
+        # Keep pixels on the substrate side of the fit, plus anything within one
+        # robust sigma of it, so that noise does not bias the surface.
         sigma = 1.4826 * np.median(np.abs(residual - np.median(residual)))
         sigma = float(max(sigma, 1e-6))
-        mask = residual > -1.0 * sigma
+        cut = reject_sigma * sigma
+        if polarity == "dark":
+            mask = residual > -cut
+        elif polarity == "bright":
+            mask = residual < cut
+        elif polarity == "both":
+            mask = np.abs(residual) < cut
+        else:
+            raise ValueError(f"unknown polarity: {polarity!r}")
 
     basis_full = design(xx_full.ravel(), yy_full.ravel())
     return (basis_full @ coeffs).reshape(height, width)
@@ -128,15 +156,26 @@ def _median_background(channel: np.ndarray, size: int, downsample: int) -> np.nd
     return ndimage.zoom(smoothed, zoom, order=1)[: channel.shape[0], : channel.shape[1]]
 
 
-def _morphological_background(channel: np.ndarray, size: int) -> np.ndarray:
-    """Grey-scale closing background, the discrete analogue of a rolling ball.
+def _morphological_background(
+    channel: np.ndarray, size: int, polarity: Polarity = "dark"
+) -> np.ndarray:
+    """Grey-scale rolling-ball background, on whichever side the flakes sit.
 
-    Closing (not opening) because flakes are darker than the substrate.
+    Closing removes dark features and opening removes bright ones. `both`
+    composes the two, which suppresses features of either sign at the cost of
+    slightly more smoothing of the substrate itself.
     """
     kernel = max(3, int(size))
     if kernel % 2 == 0:
         kernel += 1
-    return ndimage.grey_closing(channel, size=kernel, mode="nearest")
+    if polarity == "dark":
+        return ndimage.grey_closing(channel, size=kernel, mode="nearest")
+    if polarity == "bright":
+        return ndimage.grey_opening(channel, size=kernel, mode="nearest")
+    if polarity == "both":
+        closed = ndimage.grey_closing(channel, size=kernel, mode="nearest")
+        return ndimage.grey_opening(closed, size=kernel, mode="nearest")
+    raise ValueError(f"unknown polarity: {polarity!r}")
 
 
 def estimate_background(image: np.ndarray, config: ContrastConfig) -> np.ndarray:
@@ -168,14 +207,21 @@ def estimate_background(image: np.ndarray, config: ContrastConfig) -> np.ndarray
         channel = array[..., c]
         if config.method == "polynomial":
             out[..., c] = _fit_poly_background(
-                channel, config.poly_degree, config.poly_iterations, config.poly_downsample
+                channel,
+                config.poly_degree,
+                config.poly_iterations,
+                config.poly_downsample,
+                config.polarity,
+                config.poly_reject_sigma,
             )
         elif config.method == "median":
             out[..., c] = _median_background(
                 channel, config.median_size, config.median_downsample
             )
         elif config.method == "morphological":
-            out[..., c] = _morphological_background(channel, config.morph_size)
+            out[..., c] = _morphological_background(
+                channel, config.morph_size, config.polarity
+            )
         else:
             raise ValueError(f"unknown background method: {config.method!r}")
     return out

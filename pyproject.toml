@@ -25,6 +25,7 @@ dev = ["pytest>=7.4", "ruff>=0.4"]
 flakeseg-train = "flakeseg.train:main"
 flakeseg-evaluate = "flakeseg.evaluate:main"
 flakeseg-audit = "flakeseg.audit:main"
+flakeseg-prepare-maskterial = "flakeseg.data.maskterial:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

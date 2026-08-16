@@ -365,11 +365,19 @@ class FlakeEvalDataset(Dataset):
         return {"image": image, "mask": mask, "name": image_path.stem}
 
 
-def write_split_manifest(root: str | Path, out: str | Path) -> None:
-    """Record which files were used, so a run can be reproduced exactly."""
+def write_split_manifest(
+    root: str | Path,
+    out: str | Path,
+    splits: Sequence[str] = ("train2024", "val2024"),
+) -> None:
+    """Record which files were used, so a run can be reproduced exactly.
+
+    `splits` is explicit because split names are a property of the dataset, not
+    of this repo: the 2DFlakeSemSeg release uses `train2024`/`val2024` while a
+    converted MaskTerial release uses `train`/`val`/`test`.
+    """
     root = Path(root)
     manifest = {
-        split: [p.name for p, _ in find_pairs(root, split)]
-        for split in ("train2024", "val2024")
+        split: [p.name for p, _ in find_pairs(root, split)] for split in splits
     }
     Path(out).write_text(json.dumps(manifest, indent=2))

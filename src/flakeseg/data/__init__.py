@@ -8,6 +8,7 @@ from .dataset import (
     area_balanced_weights,
     find_pairs,
 )
+from .maskterial import prepare as prepare_maskterial
 from .transforms import AugmentConfig, FlakeAugment
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "estimate_background",
     "find_pairs",
     "optical_contrast",
+    "prepare_maskterial",
 ]
