@@ -155,4 +155,3 @@ scripts/
   a directory of tiles without modification.
 - `val_max_images` exists because whole-image sliding-window validation over the
   full split is slow. Use it during development, and set it to 0 for reported numbers.
-# material_flake_segmentation

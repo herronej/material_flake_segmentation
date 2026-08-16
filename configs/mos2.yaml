@@ -1,0 +1,68 @@
+# mos2: overrides on top of configs/base.yaml
+train_split: train2024
+val_split: val2024
+batch_size: 4
+accum_steps: 4
+num_workers: 8
+max_iters: 60000
+warmup_iters: 1500
+val_interval: 4000
+log_interval: 50
+iters_per_epoch: 2000
+lr: 0.0003
+encoder_lr_scale: 0.1
+weight_decay: 0.05
+grad_clip: 1.0
+schedule: poly
+poly_power: 0.9
+amp_dtype: bfloat16
+seed: 0
+val_max_images: 0
+model:
+  in_channels: 3
+  num_classes: 2
+  variant: tiny
+  decoder_channels: 128
+  detail_channels: 32
+  drop_path_rate: 0.2
+  use_aux_head: true
+sample:
+  crop_size: 768
+  foreground_prob: 0.4
+  context_factor: 1.5
+  area_weight_alpha: 0.5
+  area_weight_reference: 10000.0
+  area_weight_max: 8.0
+contrast:
+  method: polynomial
+  poly_degree: 2
+  poly_iterations: 3
+  poly_downsample: 8
+  clip: 0.5
+  scale: 10.0
+augment:
+  flip_prob: 0.5
+  rot90_prob: 0.5
+  gain_prob: 0.5
+  channel_gain_prob: 0.5
+  vignette_prob: 0.3
+  blur_prob: 0.3
+  noise_prob: 0.5
+  offset_prob: 0.3
+loss:
+  ce_weight: 1.0
+  tversky_weight: 1.0
+  boundary_weight: 0.5
+  aux_weight: 0.4
+  tversky_alpha: 0.3
+  tversky_beta: 0.7
+inference:
+  window: 768
+  overlap: 0.25
+  context_factor: 1.5
+  batch_size: 4
+  flip_tta: false
+  amp: true
+  min_component_area: 0
+data_root: data/MoS2
+output_dir: runs/mos2

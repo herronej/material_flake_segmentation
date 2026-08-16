@@ -1,0 +1,80 @@
+# Shared defaults. Material configs override data_root, output_dir, and anything
+# that genuinely differs between graphene and MoS2.
+
+train_split: train2024
+val_split: val2024
+
+# Effective batch = batch_size * accum_steps * world_size = 4 * 4 * 8 = 128
+# on a full Frontier node. The baseline ran an effective batch of 2.
+batch_size: 4
+accum_steps: 4
+num_workers: 8
+max_iters: 60000
+warmup_iters: 1500
+val_interval: 4000
+log_interval: 50
+iters_per_epoch: 2000
+
+lr: 3.0e-4
+encoder_lr_scale: 0.1     # pretrained encoder moves slower than the new decoder
+weight_decay: 0.05
+grad_clip: 1.0
+schedule: poly
+poly_power: 0.9
+
+amp_dtype: bfloat16       # bf16 avoids loss scaling entirely; native on MI250X/MI300
+seed: 0
+val_max_images: 0         # 0 evaluates the whole val split
+
+model:
+  in_channels: 3
+  num_classes: 2
+  variant: tiny
+  decoder_channels: 128
+  detail_channels: 32
+  drop_path_rate: 0.2
+  use_aux_head: true
+
+sample:
+  crop_size: 768
+  foreground_prob: 0.4    # baseline was effectively ~0 (cat_max_ratio=1.0)
+  context_factor: 1.5     # background fitted on a wider window than the crop
+  area_weight_alpha: 0.5
+  area_weight_reference: 10000.0
+  area_weight_max: 8.0
+
+contrast:
+  method: polynomial
+  poly_degree: 2
+  poly_iterations: 3
+  poly_downsample: 8
+  clip: 0.5
+  scale: 10.0
+
+augment:
+  flip_prob: 0.5
+  rot90_prob: 0.5
+  gain_prob: 0.5
+  channel_gain_prob: 0.5
+  vignette_prob: 0.3
+  blur_prob: 0.3
+  noise_prob: 0.5
+  offset_prob: 0.3
+  # No hue jitter. Per-channel contrast is the label signal, not a nuisance.
+
+loss:
+  ce_weight: 1.0
+  tversky_weight: 1.0
+  boundary_weight: 0.5
+  aux_weight: 0.4
+  tversky_alpha: 0.3      # alpha < beta biases toward recall
+  tversky_beta: 0.7
+
+inference:
+  window: 768
+  overlap: 0.25           # baseline used 32px on a 544 window
+  context_factor: 1.5
+  batch_size: 4
+  flip_tta: false
+  amp: true
+  min_component_area: 0   # keep at 0 so the filter does not set small-flake recall
