@@ -12,7 +12,7 @@ train_split: train
 val_split: val
 batch_size: 4
 accum_steps: 4
-num_workers: 8
+num_workers: 6    # sbatch gives -c 7; leave a core for the main process
 
 # 73 images, not 20k. The graphene schedule of 60k iters would pass over every
 # image hundreds of times; this is short enough to be re-run cheaply while the

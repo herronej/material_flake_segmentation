@@ -577,3 +577,42 @@ class TestContrastPolarity:
             estimate_background(
                 self._stack(-1.0), ContrastConfig(polarity="sideways")
             )
+
+
+class TestDecoderHasNoDeadParameters:
+    """DDP aborts on parameters that get no gradient, so this is not cosmetic.
+
+    The top-down pathway propagates the raw lateral sum, so a smoothing block
+    whose output nothing reads costs a convolution per forward pass and
+    receives no gradient. That took the whole DDP path down with "Expected to
+    have finished reduction in the prior iteration".
+    """
+
+    def _config(self, **overrides):
+        base = dict(in_channels=3, num_classes=2, variant="tiny", decoder_channels=32,
+                    detail_channels=16, use_aux_head=True)
+        base.update(overrides)
+        return ModelConfig(**base)
+
+    def test_every_parameter_receives_gradient(self):
+        model = build_model(self._config())
+        out = model(torch.randn(2, 3, 64, 64))
+        (out["out"].mean() + out["aux"].mean()).backward()
+        starved = [n for n, p in model.named_parameters() if p.requires_grad and p.grad is None]
+        assert starved == [], f"DDP would abort on these: {starved}"
+
+    def test_no_aux_head_drops_its_smoothing_block(self):
+        model = build_model(self._config(use_aux_head=False))
+        out = model(torch.randn(2, 3, 64, 64))
+        assert "aux" not in out
+        out["out"].mean().backward()
+        starved = [n for n, p in model.named_parameters() if p.requires_grad and p.grad is None]
+        assert starved == [], f"DDP would abort on these: {starved}"
+        # The aux level's block should not have been built at all.
+        assert not any(n.startswith("smooth.2") for n, _ in model.named_parameters())
+
+    def test_only_consumed_levels_are_built(self):
+        model = build_model(self._config())
+        levels = sorted({n.split(".")[1] for n, _ in model.named_parameters()
+                         if n.startswith("smooth.")})
+        assert levels == ["0", "2"]

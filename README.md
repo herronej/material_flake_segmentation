@@ -48,7 +48,7 @@ window used for the fit, so the two never disagree.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest            # 50 tests, no data required
+pytest            # 53 tests, no data required
 ```
 
 ## Data

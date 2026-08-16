@@ -222,7 +222,18 @@ class FlakeNet(nn.Module):
         self.lateral = nn.ModuleList(
             [nn.Conv2d(dim, dec, kernel_size=1) for dim in encoder_dims]
         )
-        self.smooth = nn.ModuleList([ConvBlock(dec, dec) for _ in encoder_dims])
+        # Only the levels the head actually consumes get a smoothing block.
+        # The top-down pathway propagates the raw lateral sum, so a smooth
+        # output that nothing reads is dead weight: it costs a convolution per
+        # forward pass, receives no gradient, and makes DDP abort outright
+        # ("parameters that were not used in producing loss"). Level 0 feeds
+        # the detail fusion and level 2 feeds the aux head; the stride-4 map
+        # has already aggregated every coarser level through the top-down sum,
+        # so nothing is lost by not smoothing the rest.
+        self._smooth_levels = self._levels_consumed(len(encoder_dims), cfg.use_aux_head)
+        self.smooth = nn.ModuleDict(
+            {str(i): ConvBlock(dec, dec) for i in self._smooth_levels}
+        )
 
         self.detail = DetailBranch(cfg.in_channels, cfg.detail_channels)
         d1, d2 = self.detail.out_channels
@@ -240,6 +251,19 @@ class FlakeNet(nn.Module):
         self.apply(self._init_weights)
         if cfg.freeze_encoder_stages:
             self.freeze_stages(cfg.freeze_encoder_stages)
+
+    #: Decoder level whose smoothed output is upsampled into the detail fusion.
+    FUSION_LEVEL = 0
+    #: Decoder level carrying deep supervision, at stride 16.
+    AUX_LEVEL = 2
+
+    @classmethod
+    def _levels_consumed(cls, n_levels: int, use_aux_head: bool) -> list[int]:
+        """Decoder levels whose smoothed output is read by the head."""
+        levels = {cls.FUSION_LEVEL}
+        if use_aux_head:
+            levels.add(cls.AUX_LEVEL)
+        return sorted(i for i in levels if i < n_levels)
 
     @staticmethod
     def _init_weights(module: nn.Module) -> None:
@@ -262,21 +286,33 @@ class FlakeNet(nn.Module):
         features = self.encoder(x)
 
         laterals = [conv(f) for conv, f in zip(self.lateral, features, strict=True)]
-        top = laterals[-1]
-        merged = [self.smooth[-1](top)]
-        for i in range(len(laterals) - 2, -1, -1):
-            top = laterals[i] + F.interpolate(
-                top, size=laterals[i].shape[-2:], mode="bilinear", align_corners=False
-            )
-            merged.append(self.smooth[i](top))
-        merged = merged[::-1]  # strides 4, 8, 16, 32
 
-        aux = self.aux_head(merged[2]) if self.aux_head is not None else None
+        # Top-down pathway: `top` carries the raw lateral sum down the levels,
+        # so every level below has already absorbed the ones above it.
+        tops: list[Tensor] = [laterals[-1]]
+        for i in range(len(laterals) - 2, -1, -1):
+            tops.append(
+                laterals[i]
+                + F.interpolate(
+                    tops[-1],
+                    size=laterals[i].shape[-2:],
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            )
+        tops = tops[::-1]  # strides 4, 8, 16, 32
+
+        merged = {i: self.smooth[str(i)](tops[i]) for i in self._smooth_levels}
+
+        aux = self.aux_head(merged[self.AUX_LEVEL]) if self.aux_head is not None else None
 
         detail1, detail2 = self.detail(x)
 
         up2 = F.interpolate(
-            merged[0], size=detail2.shape[-2:], mode="bilinear", align_corners=False
+            merged[self.FUSION_LEVEL],
+            size=detail2.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
         )
         fused2 = self.fuse2(torch.cat([up2, detail2], dim=1))
 
