@@ -16,14 +16,20 @@
 set -euo pipefail
 
 module load PrgEnv-gnu
-module load rocm
+# Pinned, not bare `rocm`: the unversioned module resolves to the site default
+# (6.2.4 as of this writing), while the wheel is torch==2.8.0+rocm6.4. A
+# mismatched module puts its own ROCm libs ahead of the ones bundled in the
+# wheel and you get loader errors that look like a broken install. Keep this
+# in step with whatever `pip install --index-url .../rocm6.4` provided.
+module load rocm/6.4.2
 module load craype-accel-amd-gfx90a
 
 source "${FLAKESEG_VENV:-$HOME/envs/flakeseg}/bin/activate"
 
-export MIOPEN_USER_DB_PATH="/tmp/miopen-$SLURM_JOB_ID-$SLURM_PROCID"
-export MIOPEN_CUSTOM_CACHE_DIR="$MIOPEN_USER_DB_PATH"
-mkdir -p "$MIOPEN_USER_DB_PATH"
+# NOTE: MIOpen cache paths are set per rank inside the srun wrapper below, not
+# here. In the batch script SLURM_PROCID is 0 (or unset), so setting them at
+# this scope hands all 8 ranks on the node the same node-local SQLite cache and
+# they serialize on its lock while autotuning kernels.
 
 # RCCL over Slingshot. Drop these if your site module already sets them.
 export NCCL_SOCKET_IFNAME=hsn
@@ -45,5 +51,8 @@ srun --unbuffered bash -c '
   export RANK=$SLURM_PROCID
   export LOCAL_RANK=$SLURM_LOCALID
   export WORLD_SIZE=$SLURM_NTASKS
+  export MIOPEN_USER_DB_PATH="/tmp/miopen-$SLURM_JOB_ID-$SLURM_PROCID"
+  export MIOPEN_CUSTOM_CACHE_DIR="$MIOPEN_USER_DB_PATH"
+  mkdir -p "$MIOPEN_USER_DB_PATH"
   exec python -m flakeseg.train --config '"$CONFIG"'
 '
