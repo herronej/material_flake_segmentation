@@ -52,11 +52,26 @@ sample:
   foreground_prob: 0.7
   context_factor: 1.5
   area_weight_alpha: 0.5
+  # Kept at graphene's value despite every flake here being under 10k px
+  # (p5 375, p50 611, p95 3578). Weights clip to a floor of 1.0, so a smaller
+  # reference flattens everything above it: at 1000, p75 and p95 both sit on
+  # the floor and only the smallest half is balanced at all. At 10000 the
+  # weights run 5.16 -> 1.67 monotonically across p5 -> p95 with no clipping at
+  # either end, since the ceiling only bites below 156 px. That every flake
+  # ends up weighted above 1 is useful here rather than accidental: foreground
+  # is 0.1% of pixels.
   area_weight_reference: 10000.0
   area_weight_max: 8.0
 contrast:
   method: polynomial
-  polarity: both          # hBN contrast sign is not fixed; see contrast.py
+  # Measured, not assumed. hBN's contrast is interference-driven, so `both`
+  # looked like the safe default, but the audit over 50 training images says
+  # otherwise: dark gives approx_snr 11.05 against 7.51 for both. These flakes
+  # are genuinely darker than the substrate in R and G (contrast_fg_median
+  # -0.152, -0.150), and symmetric rejection trims real substrate pixels,
+  # dragging the fitted surface down until the blue channel reads falsely
+  # positive (+0.078 under both, +0.003 under dark).
+  polarity: dark
   poly_degree: 2
   poly_iterations: 3
   poly_downsample: 8

@@ -48,7 +48,7 @@ window used for the fit, so the two never disagree.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest            # 34 tests, no data required
+pytest            # 50 tests, no data required
 ```
 
 ## Data
@@ -86,15 +86,24 @@ rather than a silent degradation; the converter collapses them by default and
 `--val-fraction` holds out images for threshold calibration — sweeping the
 threshold on test would invalidate the number it produces.
 
-hBN is not graphene optically. Its contrast is interference-driven rather than
-absorptive, so the sign is not fixed with thickness, and the default background
-estimator assumes flakes sit *below* the substrate level. `configs/hbn.yaml`
-therefore sets `contrast.polarity: both`. Confirm that choice on real images
-before a long run:
+hBN's contrast is interference-driven rather than absorptive, so its sign is
+not fixed with thickness the way graphene's is, and `contrast.polarity` exists
+to avoid assuming it. On this dataset the assumption survives measurement:
+`dark` scores `approx_snr` 11.05 against 7.51 for `both`, because the flakes
+really are darker than the substrate in R and G. `configs/hbn.yaml` therefore
+keeps `polarity: dark`. Re-run the comparison on any new material rather than
+inheriting that result:
 
 ```bash
-flakeseg-audit --root data/hBN_Thin --split train --polarity both --limit 50
+flakeseg-audit --root data/hBN_Thin --split train --polarity dark --limit 50
 ```
+
+The audit also confirmed `sample.area_weight_reference` should stay at 10000
+and that the JPEG compression is benign here (`blocking_mean` ~1.04, against
+1.0 for none). Note that every flake in this dataset is under 10k px, so the
+10k and 100k rows of the evaluation table are empty by construction — that is
+the data, not a bug. Checkpoint selection is unaffected: it reads the smallest
+bucket, which holds all 104 components.
 
 ## Run the audit first
 
