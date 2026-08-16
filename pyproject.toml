@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flakeseg"
+version = "0.1.0"
+description = "Semantic segmentation of 2D material flakes in optical micrographs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "torch>=2.1",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pillow>=10.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+timm = ["timm>=0.9"]
+dev = ["pytest>=7.4", "ruff>=0.4"]
+
+[project.scripts]
+flakeseg-train = "flakeseg.train:main"
+flakeseg-evaluate = "flakeseg.evaluate:main"
+flakeseg-audit = "flakeseg.audit:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+filterwarnings = ["ignore::UserWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]
