@@ -72,8 +72,12 @@ needed — only a directory remap:
 ```bash
 curl -L -o Real_hBN_Thin.zip "https://zenodo.org/records/15765514/files/Real_hBN_Thin.zip?download=1"
 python -m zipfile -e Real_hBN_Thin.zip raw/
-flakeseg-prepare-maskterial --src raw/hBN_Thin --dst data/hBN_Thin --val-fraction 0.2
+flakeseg-prepare-maskterial --src raw --dst data/hBN_Thin --val-fraction 0.2
 ```
+
+`Real_hBN_Thin.zip` unpacks its split directories straight to the root rather
+than under a material directory, hence `--src raw`. Other releases nest, so
+`--src` accepts either and descends when the nesting is unambiguous.
 
 Two of those conversions are load-bearing. MaskTerial masks encode *layer
 number*, so feeding them to a 2-logit head is an out-of-bounds class index

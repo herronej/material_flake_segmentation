@@ -189,6 +189,43 @@ def split_train_val(
     return train, val
 
 
+def _holds_splits(path: Path) -> bool:
+    return all(
+        (path / name).is_dir() for pair in SOURCE_SPLITS.values() for name in pair
+    )
+
+
+def resolve_root(src: Path) -> Path:
+    """Find the directory that actually holds the split directories.
+
+    Whether a release zip carries a top-level material directory is not
+    consistent: `Real_hBN_Thin.zip` unpacks its split directories straight to
+    the root, so `--src raw` and `--src raw/hBN_Thin` are both things a user
+    will reasonably try. Accept either, rather than making the caller guess.
+    """
+    if not src.is_dir():
+        raise FileNotFoundError(f"no such directory: {src}")
+    if _holds_splits(src):
+        return src
+
+    nested = [p for p in sorted(src.iterdir()) if p.is_dir() and _holds_splits(p)]
+    if len(nested) == 1:
+        logger.info("descending into %s", nested[0])
+        return nested[0]
+    if len(nested) > 1:
+        raise FileNotFoundError(
+            f"{src} contains several MaskTerial releases "
+            f"({', '.join(p.name for p in nested)}); point --src at one of them"
+        )
+
+    found = sorted(p.name for p in src.iterdir() if p.is_dir())
+    raise FileNotFoundError(
+        f"{src} does not look like a MaskTerial release. Expected directories "
+        f"{sorted(n for pair in SOURCE_SPLITS.values() for n in pair)}, "
+        f"found {found or '(no subdirectories)'}"
+    )
+
+
 def prepare(
     src: Path,
     dst: Path,
@@ -198,17 +235,7 @@ def prepare(
     copy: bool = False,
 ) -> dict:
     """Convert a MaskTerial material directory into a flakeseg data root."""
-    missing = [
-        name
-        for pair in SOURCE_SPLITS.values()
-        for name in pair
-        if not (src / name).is_dir()
-    ]
-    if missing:
-        raise FileNotFoundError(
-            f"{src} does not look like a MaskTerial release; missing: {', '.join(missing)}"
-        )
-
+    src = resolve_root(src)
     dst.mkdir(parents=True, exist_ok=True)
     reports: list[SplitReport] = []
 

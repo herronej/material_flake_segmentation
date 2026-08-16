@@ -41,11 +41,15 @@ model:
   drop_path_rate: 0.2
   use_aux_head: true
 sample:
-  # CHECK against the real image size before the first run: the converter
-  # reports it, and if the micrographs are smaller than this the dataset pads
-  # with ignore_index and wastes most of every crop.
+  # Images are 1920x1200, so this crops without padding and the 1.5x context
+  # window (768) still fits. Smaller than graphene's 768 on purpose: 73 images
+  # is little enough that more, smaller crops buy sampling diversity, and the
+  # stride-1 decode is the throughput bottleneck.
   crop_size: 512
-  foreground_prob: 0.6    # hBN flakes are sparser and fainter than graphene
+  # Foreground is ~0.1% of pixels here, against ~1% for graphene: roughly 2350
+  # flake pixels in a 2.3 Mpx image. Unforced crops would be almost all
+  # substrate, so this is doing more work than it does for graphene.
+  foreground_prob: 0.7
   context_factor: 1.5
   area_weight_alpha: 0.5
   area_weight_reference: 10000.0

@@ -466,9 +466,38 @@ class TestMaskTerialConversion:
         from flakeseg.data.maskterial import prepare
 
         src = tmp_path / "not_maskterial"
-        src.mkdir()
-        with pytest.raises(FileNotFoundError, match="does not look like"):
+        (src / "junk").mkdir(parents=True)
+        with pytest.raises(FileNotFoundError, match="does not look like") as excinfo:
             prepare(src, tmp_path / "out")
+        # The error has to name what it saw, or diagnosing it needs a round trip.
+        assert "junk" in str(excinfo.value)
+
+    def test_accepts_release_nested_one_level(self, tmp_path):
+        from flakeseg.data.dataset import find_pairs
+        from flakeseg.data.maskterial import prepare
+
+        # Some zips carry a material directory, some unpack their splits flat.
+        src = tmp_path / "raw"
+        _write_maskterial(src / "hBN_Thin", n_train=4, n_test=2)
+        prepare(src, tmp_path / "out")
+        assert len(find_pairs(tmp_path / "out", "train")) == 4
+
+    def test_ambiguous_nesting_is_refused(self, tmp_path):
+        from flakeseg.data.maskterial import prepare
+
+        src = tmp_path / "raw"
+        _write_maskterial(src / "hBN_Thin", n_train=2, n_test=1)
+        _write_maskterial(src / "WSe2", n_train=2, n_test=1)
+        with pytest.raises(FileNotFoundError, match="several MaskTerial releases"):
+            prepare(src, tmp_path / "out")
+
+    def test_manifest_records_resolved_source(self, tmp_path):
+        from flakeseg.data.maskterial import prepare
+
+        src = tmp_path / "raw"
+        _write_maskterial(src / "hBN_Thin", n_train=4, n_test=2)
+        manifest = prepare(src, tmp_path / "out")
+        assert manifest["source"].endswith("hBN_Thin")
 
     def test_reports_class_histogram_and_pairs(self, tmp_path):
         from flakeseg.data.maskterial import prepare, summarize
